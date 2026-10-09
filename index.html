@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedrock Fog Studio – 26.30 (no patch)</title>
+<style>
+/* Tokens: dark, low-contrast "night forest" UI. No animations, nothing runs continuously. */
+:root{--bg:#0d1113;--panel:#151b1e;--line:#263035;--text:#dde5e7;--mute:#8a999e;--accent:#8fc4b4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:12px;max-width:640px;margin-inline:auto}
+h1{font-size:20px;margin:4px 0 2px}
+p.note{color:var(--mute);margin:0 0 12px;font-size:13px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+canvas{width:100%;height:220px;display:block;border-radius:8px;background:#000}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+button,.sw{font:inherit;color:var(--text);background:#1d262a;border:1px solid var(--line);border-radius:8px;padding:9px 12px;min-height:44px}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{border-color:var(--accent);color:var(--accent)}
+.sw{width:44px;padding:0}
+label{display:flex;justify-content:space-between;color:var(--mute);font-size:13px;margin-top:8px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+input[type=color]{width:100%;height:44px;border:1px solid var(--line);border-radius:8px;background:none;padding:2px}
+textarea{width:100%;height:150px;background:#0a0e10;color:#b9c7cb;border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.4 ui-monospace,Menlo,monospace}
+</style>
+</head>
+<body>
+<h1>Bedrock Fog Studio</h1>
+<p class="note">Standalone HTML preview only. It does not change Minecraft. Export the JSON below into a resource pack (see README) for real in-game fog.</p>
+
+<div class="box"><canvas id="cv" width="640" height="440"></canvas></div>
+
+<div class="box">
+  <b>Presets</b>
+  <div class="row" id="presets"></div>
+  <b>Fog color</b>
+  <div class="row" id="swatches"></div>
+  <input type="color" id="color" aria-label="Custom fog color">
+  <label>Fog start <span id="vs"></span></label><input type="range" id="start" min="0" max="80" step="1">
+  <label>Fog end (density: lower = thicker) <span id="ve"></span></label><input type="range" id="end" min="8" max="160" step="1">
+</div>
+
+<div class="box">
+  <b>Export</b>
+  <div class="row">
+    <button id="tFog" class="on">fogs/custom_fog.json</button>
+    <button id="tBio">biomes_client.json</button>
+    <button id="copy">Copy</button>
+  </div>
+  <textarea id="out" readonly aria-label="Exported JSON"></textarea>
+</div>
+
+<script>
+"use strict";
+// ---- State & data (same preset values as the .mcpack builds) ----
+const PRESETS={
+ "Realistic Fog":{c:"#b8c2c8",s:8,e:60},
+ "Ultra Dense Fog":{c:"#9aa3a6",s:0,e:14},
+ "Green Cinematic Fog":{c:"#3f5a3a",s:2,e:32},
+ "Black Mist":{c:"#0a0b0c",s:0,e:24},
+ "Soft Morning Fog":{c:"#e8eef2",s:10,e:80}};
+const COLORS={Green:"#3f5a3a",Black:"#0a0b0c",Gray:"#8b9396",White:"#eef2f4",Blue:"#4a6a8c"};
+const $=id=>document.getElementById(id);
+const st={c:"#b8c2c8",s:8,e:60,tab:"fog"};
+
+// ---- Preview: draws 6 silhouette layers; each is blended toward the fog color by distance.
+// Redraws only when a control changes (no animation loop).
+const cv=$("cv"),g=cv.getContext("2d");
+const hex=h=>[1,3,5].map(i=>parseInt(h.substr(i,2),16));
+const mix=(a,b,t)=>"rgb("+a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join()+")";
+function draw(){
+  const W=cv.width,H=cv.height,fog=hex(st.c);
+  const sky=g.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,mix([40,70,110],fog,.55));sky.addColorStop(1,mix(fog,fog,0));
+  g.fillStyle=sky;g.fillRect(0,0,W,H);
+  for(let i=5;i>=0;i--){
+    const dist=12+i*22;                                   // blocks from camera (preview scale)
+    const f=Math.min(1,Math.max(0,(dist-st.s)/Math.max(1,st.e-st.s)));
+    const col=mix([18,34,20],fog,f), base=H*(.52+(5-i)*.09), amp=18+(5-i)*6;
+    g.fillStyle=col;g.beginPath();g.moveTo(0,H);
+    for(let x=0;x<=W;x+=8){g.lineTo(x,base-amp*Math.sin(x*.012+i*2)-amp*.5*Math.sin(x*.031+i));}
+    g.lineTo(W,H);g.fill();
+    const n=6+(5-i)*3,sz=26+(5-i)*12;                     // trees
+    for(let k=0;k<n;k++){const x=((k*97+i*53)%W),y=base-amp*Math.sin(x*.012+i*2)+8;
+      g.beginPath();g.moveTo(x,y-sz);g.lineTo(x-sz*.25,y);g.lineTo(x+sz*.25,y);g.fill();}
+  }
+}
+
+// ---- Export: generates the same JSON the resource pack uses ----
+function fogJson(){return JSON.stringify({format_version:"1.16.100","minecraft:fog_settings":{
+  description:{identifier:"fogstudio:custom_fog"},
+  distance:{air:{fog_start:st.s,fog_end:st.e,fog_color:st.c.toUpperCase(),render_distance_type:"fixed"}}}},null,2);}
+function bioJson(){return JSON.stringify({format_version:"1.21.0",biomes:{default:{fog_identifier:"fogstudio:custom_fog"}}},null,2);}
+function refresh(){
+  $("vs").textContent=st.s+" blocks";$("ve").textContent=st.e+" blocks";
+  $("start").value=st.s;$("end").value=st.e;$("color").value=st.c;
+  $("out").value=st.tab==="fog"?fogJson():bioJson();
+  $("tFog").className=st.tab==="fog"?"on":"";$("tBio").className=st.tab==="bio"?"on":"";
+  draw();
+}
+
+// ---- UI wiring ----
+for(const k in PRESETS){const b=document.createElement("button");b.textContent=k;
+  b.onclick=()=>{Object.assign(st,PRESETS[k]);refresh()};$("presets").append(b);}
+for(const k in COLORS){const b=document.createElement("button");b.className="sw";b.title=k;b.setAttribute("aria-label",k+" fog");
+  b.style.background=COLORS[k];b.onclick=()=>{st.c=COLORS[k];refresh()};$("swatches").append(b);}
+$("color").oninput=e=>{st.c=e.target.value;refresh()};
+$("start").oninput=e=>{st.s=+e.target.value;if(st.e<=st.s)st.e=st.s+1;refresh()};
+$("end").oninput=e=>{st.e=+e.target.value;if(st.s>=st.e)st.s=st.e-1;refresh()};
+$("tFog").onclick=()=>{st.tab="fog";refresh()};
+$("tBio").onclick=()=>{st.tab="bio";refresh()};
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText($("out").value);$("copy").textContent="Copied"}
+  catch(e){$("out").select();$("copy").textContent="Select + copy manually"}
+  setTimeout(()=>$("copy").textContent="Copy",1500)};
+refresh();
+</script>
+</body>
+</html>
